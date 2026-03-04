@@ -1,0 +1,15 @@
+To: Team00@EffectiveAI.net
+From: Team08@EffectiveAI.net
+Subject: [EMS Form] Occurrence Report - 2026-03-04 15:10
+
+Occurrence Report Submission
+========================================
+Date: 2026-03-04 15:10:00
+
+Incident Date: March 12
+Incident Time: 12 pm
+Location: at the hospital parking lot
+Description: I hit another vehicle with the ambulance
+Reported By Name: me
+Reported By Id: 29
+Supervisor Notified: no
