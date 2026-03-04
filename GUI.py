@@ -1,0 +1,308 @@
+# gui.py
+import tkinter as tk
+from tkinter import scrolledtext, Toplevel
+import threading
+import os
+import sys
+import subprocess
+import json
+from dotenv import load_dotenv
+
+from AudioRecorder import AudioRecorder
+from Transcriber import Transcriber
+from ContextExtractor import ContextExtractor
+from FormFiller import FormFiller
+from ChatBot import ChatBot
+from AnswerBuilder import AnswerBuilder
+
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise ValueError("API_KEY not found in .env file")
+
+class RecorderApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Paramedic Voice Assistant")
+        self.root.geometry("700x900")
+
+        self.recorder = AudioRecorder()
+        self.transcriber = Transcriber()
+        self.extractor = ContextExtractor()
+        self.form_filler = FormFiller()
+        self.chatbot = ChatBot()
+        self.answer_builder = AnswerBuilder(tts_engine="elevenlabs")
+
+        self.is_recording = False
+        self.last_transcription = ""
+        self.form_completion_mode = False
+        self.current_form_name = ""
+        self.current_form_data = {}
+        self.unknown_fields = []
+
+        # ----- Top buttons -----
+        btn_frame = tk.Frame(root)
+        btn_frame.pack(pady=10)
+
+        self.record_btn = tk.Button(
+            btn_frame,
+            text="🎤 Record",
+            font=("Arial", 16),
+            width=8,
+            bg="lightblue",
+            command=self.toggle_recording
+        )
+        self.record_btn.pack(side=tk.LEFT, padx=5)
+
+        self.fill_btn = tk.Button(
+            btn_frame,
+            text="📝 Fill Form",
+            font=("Arial", 16),
+            width=8,
+            bg="lightgreen",
+            state=tk.DISABLED,
+            command=self.open_form_window
+        )
+        self.fill_btn.pack(side=tk.LEFT, padx=5)
+
+        # ----- Main text area -----
+        self.text_area = scrolledtext.ScrolledText(
+            root,
+            wrap=tk.WORD,
+            width=80,
+            height=20,
+            font=("Arial", 10)
+        )
+        self.text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+    # ----- Recording methods -----
+    def toggle_recording(self):
+        if not self.is_recording:
+            self.is_recording = True
+            self.record_btn.config(text="⏹ Stop", bg="lightcoral")
+            self.text_area.delete(1.0, tk.END)
+            self.text_area.insert(tk.END, "Recording... Speak now.")
+            threading.Thread(target=self.recorder.start_recording, daemon=True).start()
+        else:
+            self.is_recording = False
+            self.record_btn.config(text="🎤 Record", bg="lightblue")
+            self.text_area.insert(tk.END, "\n\nStopping recording... transcribing...")
+            self.recorder.stop_recording("output.wav")
+            threading.Thread(target=self.transcribe_audio, daemon=True).start()
+
+    def load_recent_context(self, max_entries=3):
+        if not os.path.exists("context.json"):
+            return None
+        with open("context.json", "r", encoding="utf-8") as f:
+            entries = json.load(f)
+        recent = entries[-max_entries:] if entries else []
+        if not recent:
+            return None
+        lines = ["Recent incidents:"]
+        for i, e in enumerate(recent, 1):
+            desc = e.get('brief_description', 'No description')
+            when = e.get('when', 'unknown')
+            where = e.get('where', 'unknown')
+            lines.append(f"{i}. [{when} at {where}] {desc}")
+        return "\n".join(lines)
+
+    def transcribe_audio(self):
+        try:
+            past_context = self.load_recent_context()
+            text = self.transcriber.transcribe(
+                "output.wav",
+                past_context=past_context,
+                output_path="response.txt"
+            )
+            self.last_transcription = text
+
+            data = self.extractor.extract(text, output_path="context.json")
+
+            display = "📝 TRANSCRIPTION:\n" + text + "\n\n📊 EXTRACTED INFO:\n"
+            for k, v in data.items():
+                display += f"{k}: {v}\n"
+
+            self.root.after(0, self.display_transcription, display)
+            self.root.after(0, lambda: self.fill_btn.config(state=tk.NORMAL))
+            
+            # Automatically generate AI response and speak it
+            self.root.after(0, self.display_transcription, display + "\n\n🤖 Generating AI response...")
+            threading.Thread(target=self.auto_generate_and_speak, args=(text, past_context), daemon=True).start()
+            
+        except Exception as e:
+            self.root.after(0, self.display_error, str(e))
+    
+    def auto_generate_and_speak(self, transcription, context):
+        """Generate AI response to transcription and speak it automatically."""
+        try:
+            # Generate answer based on transcription
+            prompt = f"Respond in ONE short sentence to your colleague: {transcription}"
+            reply = self.answer_builder.generate_answer(prompt, context)
+            
+            # Display the response
+            display = f"📝 TRANSCRIPTION:\n{transcription}\n\n🤖 AI RESPONSE:\n{reply}"
+            self.root.after(0, self.display_transcription, display + "\n\n🔄 Generating audio...")
+            
+            # Convert to speech
+            audio_file = self.answer_builder.text_to_speech(
+                reply,
+                output_file="assistant_response.mp3"
+            )
+            
+            # Update display and play audio
+            self.root.after(0, self.display_transcription, display + "\n\n🎵 Playing audio response...")
+            
+            if sys.platform == "win32":
+                os.startfile(audio_file)
+            elif sys.platform == "darwin":
+                subprocess.run(["afplay", audio_file])
+            else:
+                subprocess.run(["paplay", audio_file])
+                
+            # Show completion
+            self.root.after(0, self.display_transcription, display + "\n\n✅ Response complete. Ready for next recording.")
+            
+        except Exception as e:
+            self.root.after(0, self.display_error, f"Response generation error: {str(e)}")
+
+    def display_transcription(self, text):
+        self.text_area.delete(1.0, tk.END)
+        self.text_area.insert(tk.END, text)
+
+    def display_error(self, msg):
+        self.text_area.delete(1.0, tk.END)
+        self.text_area.insert(tk.END, f"Error: {msg}")
+
+    # ----- Form filling and chat integration -----
+    def open_form_window(self):
+        if not self.last_transcription:
+            return
+        threading.Thread(target=self.fill_form_and_show, daemon=True).start()
+
+    def fill_form_and_show(self):
+        try:
+            form_name, filled_data = self.form_filler.process(self.last_transcription)
+            self.current_form_name = form_name
+            self.current_form_data = filled_data
+            self.unknown_fields = [f for f, v in filled_data.items() if v == "unknown"]
+            self.root.after(0, self.display_form_and_ask)
+            self.root.after(0, self.create_form_display_window, form_name, filled_data)
+        except Exception as e:
+            self.root.after(0, self.display_error, f"Form filling error: {str(e)}")
+
+    def display_form_and_ask(self):
+        display = f"Filled Form: {self.current_form_name}\n\n"
+        for field, value in self.current_form_data.items():
+            display += f"{field.replace('_', ' ').title()}: {value}\n"
+        self.text_area.delete(1.0, tk.END)
+        self.text_area.insert(tk.END, display)
+
+        if self.unknown_fields:
+            self.form_completion_mode = True
+            display += f"\n⚠️ Still need: {', '.join(self.unknown_fields)}\nRecord info for missing fields."
+            self.text_area.delete(1.0, tk.END)
+            self.text_area.insert(tk.END, display)
+        else:
+            self.form_completion_mode = False
+
+    def update_form_display(self):
+        display = f"Filled Form: {self.current_form_name}\n\n"
+        for field, value in self.current_form_data.items():
+            display += f"{field.replace('_', ' ').title()}: {value}\n"
+        self.text_area.delete(1.0, tk.END)
+        self.text_area.insert(tk.END, display)
+
+    # ----- Email feature -----
+    def confirm_and_send_email(self, form_name, form_data):
+        """Show confirmation dialog and send email via SMTP."""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from datetime import datetime
+
+        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+        sender_email = os.getenv("SENDER_EMAIL")
+        sender_password = os.getenv("SENDER_PASSWORD")
+
+        win = Toplevel(self.root)
+        win.title("Confirm Email")
+        win.geometry("600x500")
+
+        text = scrolledtext.ScrolledText(win, wrap=tk.WORD, width=70, height=20)
+        text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        recipient = "Team00@EffectiveAI.net"
+        subject = f"{form_name} - {form_data.get('reported_by_name', 'Paramedic')}"
+        body = f"Form: {form_name}\n\n"
+        for field, value in form_data.items():
+            body += f"{field.replace('_', ' ').title()}: {value}\n"
+
+        email_content = f"To: {recipient}\nSubject: {subject}\n\n{body}"
+        text.insert(tk.END, email_content)
+        text.config(state=tk.DISABLED)
+
+        btn_frame = tk.Frame(win)
+        btn_frame.pack(pady=10)
+
+        def send_email():
+            send_btn.config(state=tk.DISABLED, text="Sending...")
+            win.update()
+
+            try:
+                if not sender_email or not sender_password:
+                    filename = f"{form_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                    with open(filename, 'w') as f:
+                        f.write(email_content)
+                    self.add_chat_message("System", f"⚠️ No email credentials. Form saved as {filename}")
+                    win.destroy()
+                    return
+
+                msg = MIMEMultipart()
+                msg['From'] = sender_email
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(MIMEText(body, 'plain'))
+
+                with smtplib.SMTP(smtp_server, smtp_port) as server:
+                    server.starttls()
+                    server.login(sender_email, sender_password)
+                    server.send_message(msg)
+
+                self.add_chat_message("System", f"✅ Email successfully sent to {recipient}")
+            except Exception as e:
+                self.add_chat_message("System", f"❌ Failed to send email: {str(e)}")
+            finally:
+                win.destroy()
+
+        send_btn = tk.Button(btn_frame, text="Send Email", command=send_email, bg="lightgreen")
+        send_btn.pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=win.destroy, bg="lightcoral").pack(side=tk.LEFT, padx=5)
+
+    def create_form_display_window(self, form_name, filled_data):
+        """Pop-up window with the filled form and email button."""
+        win = Toplevel(self.root)
+        win.title(f"Filled Form: {form_name}")
+        win.geometry("600x600")
+
+        text = scrolledtext.ScrolledText(win, wrap=tk.WORD, width=70, height=25)
+        text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        content = f"Form: {form_name}\n\n"
+        for field, value in filled_data.items():
+            content += f"{field.replace('_', ' ').title()}: {value}\n"
+        text.insert(tk.END, content)
+        text.config(state=tk.DISABLED)
+
+        tk.Button(
+            win,
+            text="📧 Send via Email",
+            command=lambda: self.confirm_and_send_email(form_name, filled_data),
+            bg="lightblue",
+            font=("Arial", 12)
+        ).pack(pady=10)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RecorderApp(root)
+    root.mainloop()

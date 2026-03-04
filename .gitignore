@@ -1,0 +1,46 @@
+# Environment and API Keys
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Output files
+output.wav
+*.wav
+assistant_response.mp3
+test_response.mp3
+test_output.mp3
+test_openrouter.mp3
+response_audio.mp3
+*.mp3
+
+# Context and response files
+context.json
+response.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Test files
+test_*.py
