@@ -16,6 +16,7 @@ from ChatBot import ChatBot
 from AnswerBuilder import AnswerBuilder
 from ConversationManager import ConversationManager
 from FormSessionManager import FormSessionManager
+from ScheduleManager import ScheduleManager
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
@@ -36,6 +37,7 @@ class RecorderApp:
         self.answer_builder = AnswerBuilder(tts_engine="elevenlabs")
         self.conversation_manager = ConversationManager()
         self.form_session = FormSessionManager()
+        self.schedule_manager = ScheduleManager()
 
         self.is_recording = False
         self.last_transcription = ""
@@ -143,86 +145,98 @@ class RecorderApp:
             display = f"TRANSCRIPTION:\n{transcription}\n\n"
             self.root.after(0, self.display_transcription, display + "Analyzing...")
             
-            # Process through form session manager
-            form_result = self.form_session.process_message(transcription)
-            action = form_result["action"]
-            
-            # Handle form-related actions
-            if action == "start_form":
-                display += f"FORM DETECTED: {form_result['form_name']}\n\n"
-                if form_result["extracted"]:
-                    display += "CAPTURED:\n"
-                    for field, value in form_result["extracted"].items():
-                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
-                    display += "\n"
+            # Check if this is a schedule-related query first
+            if self.schedule_manager.is_schedule_query(transcription):
+                display += "SCHEDULE QUERY DETECTED\n\n"
+                self.root.after(0, self.display_transcription, display + "Fetching schedule data...")
                 
-                if form_result["is_complete"]:
-                    reply = f"Got it! Your {form_result['form_name']} is complete. Ready to submit."
-                else:
-                    reply = form_result["next_question"] or "What other details can you provide?"
-                    missing = form_result["missing"]
-                    display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
-                
-            elif action == "update_form":
-                display += f"FORM: {form_result['form_name']}\n\n"
-                if form_result["extracted"]:
-                    display += "NEW INFO CAPTURED:\n"
-                    for field, value in form_result["extracted"].items():
-                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
-                    display += "\n"
-                
-                # Show all collected so far
-                display += "ALL COLLECTED:\n"
-                for field, value in form_result["collected"].items():
-                    display += f"  - {field.replace('_', ' ').title()}: {value}\n"
-                display += "\n"
-                
-                missing = form_result["missing"]
-                if missing:
-                    display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
-                    reply = form_result["next_question"] or f"I still need the {missing[0].replace('_', ' ')}."
-                else:
-                    reply = "Form is complete!"
-                
-            elif action == "complete_form":
-                display += f"FORM COMPLETE: {form_result['form_name']}\n\n"
-                display += "ALL FIELDS:\n"
-                for field, value in form_result["collected"].items():
-                    display += f"  - {field.replace('_', ' ').title()}: {value}\n"
-                display += "\n"
-                
-                reply = f"Perfect! Your {form_result['form_name']} is complete with all fields filled. Would you like to submit it?"
-                
-                # Store completed form data for the Fill Form button
-                self.current_form_name = form_result["form_name"]
-                self.current_form_data = form_result["collected"]
-                self.root.after(0, lambda: self.fill_btn.config(state=tk.NORMAL))
+                # Fetch real-time schedule and answer
+                reply = self.schedule_manager.answer_schedule_query(transcription)
+                display += f"RESPONSE:\n{reply}"
                 
             else:
-                # No form intent - regular conversation
-                analysis = self.conversation_manager.add_message(transcription)
-                intent = analysis["intent"]
-                details = analysis["details"]
-                
-                display += f"INTENT: {intent}\n\n"
-                if details:
-                    display += "DETAILS:\n"
-                    for category, value in details.items():
-                        if value and value is not None:
-                            display += f"  - {category}: {value}\n"
-                    display += "\n"
-                
-                # Generate conversational response
-                prompt = f"Respond in ONE short sentence to your colleague: {transcription}"
-                reply = self.answer_builder.generate_answer(prompt, context)
-                
-                self.conversation_manager.conversation_history.append({
-                    "role": "assistant",
-                    "content": reply
-                })
+                # Process through form session manager
+                form_result = self.form_session.process_message(transcription)
+                action = form_result["action"]
             
-            # Display the response
-            display += f"RESPONSE:\n{reply}"
+                # Handle form-related actions
+                if action == "start_form":
+                    display += f"FORM DETECTED: {form_result['form_name']}\n\n"
+                    if form_result["extracted"]:
+                        display += "CAPTURED:\n"
+                        for field, value in form_result["extracted"].items():
+                            display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                        display += "\n"
+                    
+                    if form_result["is_complete"]:
+                        reply = f"Got it! Your {form_result['form_name']} is complete. Ready to submit."
+                    else:
+                        reply = form_result["next_question"] or "What other details can you provide?"
+                        missing = form_result["missing"]
+                        display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
+                    
+                elif action == "update_form":
+                    display += f"FORM: {form_result['form_name']}\n\n"
+                    if form_result["extracted"]:
+                        display += "NEW INFO CAPTURED:\n"
+                        for field, value in form_result["extracted"].items():
+                            display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                        display += "\n"
+                    
+                    # Show all collected so far
+                    display += "ALL COLLECTED:\n"
+                    for field, value in form_result["collected"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    display += "\n"
+                    
+                    missing = form_result["missing"]
+                    if missing:
+                        display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
+                        reply = form_result["next_question"] or f"I still need the {missing[0].replace('_', ' ')}."
+                    else:
+                        reply = "Form is complete!"
+                    
+                elif action == "complete_form":
+                    display += f"FORM COMPLETE: {form_result['form_name']}\n\n"
+                    display += "ALL FIELDS:\n"
+                    for field, value in form_result["collected"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    display += "\n"
+                    
+                    reply = f"Perfect! Your {form_result['form_name']} is complete with all fields filled. Would you like to submit it?"
+                    
+                    # Store completed form data for the Fill Form button
+                    self.current_form_name = form_result["form_name"]
+                    self.current_form_data = form_result["collected"]
+                    self.root.after(0, lambda: self.fill_btn.config(state=tk.NORMAL))
+                    
+                else:
+                    # No form intent - regular conversation
+                    analysis = self.conversation_manager.add_message(transcription)
+                    intent = analysis["intent"]
+                    details = analysis["details"]
+                    
+                    display += f"INTENT: {intent}\n\n"
+                    if details:
+                        display += "DETAILS:\n"
+                        for category, value in details.items():
+                            if value and value is not None:
+                                display += f"  - {category}: {value}\n"
+                        display += "\n"
+                    
+                    # Generate conversational response
+                    prompt = f"Respond in ONE short sentence to your colleague: {transcription}"
+                    reply = self.answer_builder.generate_answer(prompt, context)
+                    
+                    self.conversation_manager.conversation_history.append({
+                        "role": "assistant",
+                        "content": reply
+                    })
+                    
+                    # Display the response  
+                    display += f"RESPONSE:\n{reply}"
+            
+            # Display the response and generate audio
             self.root.after(0, self.display_transcription, display + "\n\nGenerating audio...")
             
             # Convert to speech and play
