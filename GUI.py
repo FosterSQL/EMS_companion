@@ -17,6 +17,8 @@ from AnswerBuilder import AnswerBuilder
 from ConversationManager import ConversationManager
 from FormSessionManager import FormSessionManager
 from ScheduleManager import ScheduleManager
+from ShiftChangeManager import ShiftChangeManager
+from ChecklistManager import ChecklistManager
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
@@ -38,6 +40,8 @@ class RecorderApp:
         self.conversation_manager = ConversationManager()
         self.form_session = FormSessionManager()
         self.schedule_manager = ScheduleManager()
+        self.shift_change_manager = ShiftChangeManager()
+        self.checklist_manager = ChecklistManager()
 
         self.is_recording = False
         self.last_transcription = ""
@@ -145,13 +149,128 @@ class RecorderApp:
             display = f"TRANSCRIPTION:\n{transcription}\n\n"
             self.root.after(0, self.display_transcription, display + "Analyzing...")
             
-            # Check if this is a schedule-related query first
-            if self.schedule_manager.is_schedule_query(transcription):
+            # Check for shift change request first (has its own session)
+            if self.shift_change_manager.active_session or self.shift_change_manager.is_shift_change_request(transcription):
+                scr_result = self.shift_change_manager.process_message(transcription)
+                action = scr_result["action"]
+                
+                if action == "start_scr":
+                    display += "SHIFT CHANGE REQUEST DETECTED\n\n"
+                    if scr_result["extracted"]:
+                        display += "CAPTURED:\n"
+                        for field, value in scr_result["extracted"].items():
+                            display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                        display += "\n"
+                    
+                    if scr_result["is_complete"]:
+                        reply = "Got all the info! Ready to submit your shift change request. Say 'submit' to confirm."
+                    else:
+                        reply = scr_result["next_question"] or "What details can you give me?"
+                        display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in scr_result['missing']])}\n\n"
+                
+                elif action == "update_scr":
+                    display += "SHIFT CHANGE REQUEST\n\n"
+                    if scr_result["extracted"]:
+                        display += "NEW INFO:\n"
+                        for field, value in scr_result["extracted"].items():
+                            display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                        display += "\n"
+                    
+                    display += "COLLECTED SO FAR:\n"
+                    for field, value in scr_result["collected"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    display += "\n"
+                    
+                    if scr_result["missing"]:
+                        display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in scr_result['missing']])}\n\n"
+                        reply = scr_result["next_question"]
+                    else:
+                        reply = "Got everything! Say 'submit' to send your shift change request."
+                
+                elif action == "complete_scr":
+                    display += "SHIFT CHANGE REQUEST COMPLETE\n\n"
+                    for field, value in scr_result["collected"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    
+                    # Check if user wants to submit
+                    if "submit" in transcription.lower() or "send" in transcription.lower() or "confirm" in transcription.lower():
+                        success, msg = self.shift_change_manager.submit_form()
+                        reply = msg
+                        display += f"\n{msg}\n"
+                    else:
+                        reply = "Ready to submit! Say 'submit' or 'send' to confirm your shift change request."
+                
+                else:
+                    # Check if user says submit while session is active
+                    if self.shift_change_manager.active_session and ("submit" in transcription.lower() or "send" in transcription.lower()):
+                        if self.shift_change_manager.is_complete():
+                            success, msg = self.shift_change_manager.submit_form()
+                            reply = msg
+                            display += f"\n{msg}\n"
+                        else:
+                            missing = self.shift_change_manager.get_missing_fields()
+                            reply = f"Can't submit yet, still need: {', '.join([f.replace('_', ' ') for f in missing])}"
+                    else:
+                        reply = "I didn't catch that. What shift change details do you have?"
+                
+                display += f"RESPONSE:\n{reply}"
+            
+            # Check if this is a schedule-related query
+            elif self.schedule_manager.is_schedule_query(transcription):
                 display += "SCHEDULE QUERY DETECTED\n\n"
                 self.root.after(0, self.display_transcription, display + "Fetching schedule data...")
                 
                 # Fetch real-time schedule and answer
                 reply = self.schedule_manager.answer_schedule_query(transcription)
+                display += f"RESPONSE:\n{reply}"
+            
+            # Check for daily checklist
+            elif self.checklist_manager.active_session or self.checklist_manager.is_checklist_request(transcription):
+                cl_result = self.checklist_manager.process_message(transcription)
+                action = cl_result["action"]
+                
+                if action == "start_checklist":
+                    display += "DAILY CHECKLIST STARTED\n\n"
+                    display += f"Items to check: {len(cl_result['remaining'])}\n\n"
+                    reply = cl_result["next_prompt"]
+                
+                elif action == "update_checklist":
+                    display += "CHECKLIST UPDATE\n\n"
+                    if cl_result["updated"]:
+                        display += "JUST UPDATED:\n"
+                        for code in cl_result["updated"]:
+                            status = cl_result["completed"][code]
+                            item_type = self.checklist_manager.CHECKLIST_ITEMS[code]["type"]
+                            icon = "OK" if status["status"] == "good" else "ISSUE"
+                            display += f"  [{icon}] {item_type}\n"
+                        display += "\n"
+                    
+                    display += f"Progress: {len(cl_result['completed'])}/{len(self.checklist_manager.CHECKLIST_ITEMS)} items\n"
+                    if cl_result["remaining"]:
+                        display += f"Remaining: {len(cl_result['remaining'])}\n\n"
+                    
+                    reply = cl_result["next_prompt"]
+                
+                elif action == "complete_checklist":
+                    display += "CHECKLIST COMPLETE!\n\n"
+                    display += self.checklist_manager.get_summary()
+                    
+                    if cl_result["issues"]:
+                        reply = f"All checked! You have {len(cl_result['issues'])} item(s) needing attention."
+                    else:
+                        reply = "All done! Everything looks good. Ready to start your shift!"
+                    
+                    # Save checklist
+                    filepath = self.checklist_manager.export_checklist()
+                    display += f"\nSaved to: {filepath}\n"
+                    self.checklist_manager.end_session()
+                
+                elif action == "no_match":
+                    reply = cl_result["next_prompt"]
+                
+                else:
+                    reply = "Tell me about any checklist item - like your ACRs, vaccinations, uniform, or overtime."
+                
                 display += f"RESPONSE:\n{reply}"
                 
             else:
