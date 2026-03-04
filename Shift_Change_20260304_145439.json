@@ -1,0 +1,9 @@
+{
+  "first_name": "Diego",
+  "last_name": "gonzalez",
+  "medic_number": "77",
+  "shift_day": "03/12/2026",
+  "shift_start": "7am",
+  "shift_end": "8 pm",
+  "requested_action": "change"
+}

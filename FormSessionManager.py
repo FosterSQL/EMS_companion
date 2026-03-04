@@ -128,6 +128,30 @@ class FormSessionManager:
         fields_str = ", ".join(self.current_form["fields"])
         current_data = {k: v for k, v in self.collected_fields.items() if v is not None}
 
+        # Field descriptions to help LLM understand what each field means
+        field_hints = {
+            "paramedic_id": "paramedic ID, badge number, medic number, employee ID, or any numeric ID",
+            "paramedic_name": "paramedic's name, medic name, your name",
+            "reported_by_id": "reporter's ID, badge number, employee ID",
+            "reported_by_name": "reporter's name, your name",
+            "recipient_type": "who received the teddy bear: Patient, Family, Bystander, or Other",
+            "gender": "Male, Female, Other, or Prefer not to say",
+            "date": "the date this happened",
+            "incident_date": "the date of the incident",
+            "incident_time": "the time of the incident",
+            "shift_date": "the date of the shift",
+            "start_time": "shift start time",
+            "end_time": "shift end time",
+            "location": "where this took place",
+            "partner_name": "partner's name, crew partner",
+        }
+
+        # Build field descriptions for the current form
+        field_descriptions = []
+        for field in self.current_form["fields"]:
+            hint = field_hints.get(field, field.replace("_", " "))
+            field_descriptions.append(f"- {field}: {hint}")
+        
         prompt = f"""
         You are helping fill a "{self.current_form['name']}" form.
         
@@ -137,11 +161,14 @@ class FormSessionManager:
         The user just said:
         \"\"\"{user_message}\"\"\"
 
-        Extract any field values mentioned for these fields: {fields_str}
+        Extract any field values for these fields:
+        {chr(10).join(field_descriptions)}
 
-        Return a JSON object with ONLY the fields that have NEW values from this message.
-        If a field wasn't mentioned, don't include it.
-        If the value is unclear, don't include it.
+        IMPORTANT: 
+        - If the user mentions an ID number, badge number, or medic number, map it to "paramedic_id" or "reported_by_id" as appropriate.
+        - Return the exact field names as shown above (with underscores).
+        - Return a JSON object with ONLY the fields that have NEW values from this message.
+        - If a field wasn't mentioned, don't include it.
 
         Return ONLY valid JSON, no markdown.
         """
@@ -153,7 +180,7 @@ class FormSessionManager:
             },
             model=self.model,
             messages=[
-                {"role": "system", "content": "You output only valid JSON with field values."},
+                {"role": "system", "content": "You output only valid JSON with field values. Use exact field names with underscores."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,

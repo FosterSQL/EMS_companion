@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Paramedic Voice Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header Section -->
+        <div class="header">
+            <div class="header-bg"></div>
+            <div class="avatar-container" id="avatarBtn">
+                <div class="avatar" id="avatar">
+                    <span>🚑</span>
+                </div>
+                <div class="pulse-ring" id="pulseRing"></div>
+            </div>
+            <h1 class="title">Paramedic Assistant</h1>
+            <div class="status">
+                <span class="status-dot"></span>
+                <span class="status-text">Online & Ready</span>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-container">
+            <div class="chat-area" id="chatArea">
+                <div class="chat-welcome">
+                    <p>Tap the ambulance or speak to start...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Bar -->
+        <div class="input-bar">
+            <button class="mic-btn" id="micBtn" type="button">
+                <span class="mic-icon">🎤</span>
+                <span class="stop-icon" style="display:none;">■</span>
+            </button>
+            <form class="input-form" id="inputForm">
+                <input type="text" class="text-input" id="textInput" placeholder="Type a request..." autocomplete="off">
+                <button type="submit" class="send-btn">➤</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Report Preview Modal -->
+    <div class="modal-overlay" id="previewModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modalTitle">Review Report</h2>
+                <p class="modal-subtitle" id="modalSubtitle">EffectiveAI Paramedic Services</p>
+            </div>
+            
+            <div class="modal-body" id="modalBody">
+                <!-- Dynamic content will go here -->
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-outline" id="tryAgainBtn">Try Again</button>
+                <button class="btn btn-secondary" id="printBtn">Print</button>
+                <button class="btn btn-primary" id="submitBtn">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Popup -->
+    <div class="modal-overlay" id="successModal">
+        <div class="modal success-modal">
+            <div class="success-icon">✓</div>
+            <h2>Success!</h2>
+            <p id="successMessage">Your request has been submitted.</p>
+            <button class="btn btn-primary btn-full" id="closeSuccessBtn">Close</button>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loader"></div>
+        <p>Processing...</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -46,19 +46,38 @@ class ShiftChangeManager:
         """
         Detect if user is requesting a shift change.
         """
+        import re
+        message_lower = user_message.lower()
+        
+        # Exact phrase keywords
         keywords = [
             "shift change", "swap shift", "switch shift", "trade shift",
             "drop shift", "pick up shift", "cover shift", "shift swap",
-            "change my shift", "request off", "time off", "scr",
-            "shift request", "can someone cover", "need coverage",
-            "swap with", "trade with", "take my shift",
-            "swap my shift", "switch my shift", "trade my shift",
-            "drop my shift", "pick up a shift", "need to swap",
-            "want to swap", "want to trade", "want to switch"
+            "request off", "time off", "scr", "shift request", 
+            "can someone cover", "need coverage", "swap with", "trade with",
+            "take my shift", "need to swap", "want to swap", "want to trade", 
+            "want to switch", "modify shift", "modify my shift"
         ]
         
-        message_lower = user_message.lower()
-        return any(keyword in message_lower for keyword in keywords)
+        if any(keyword in message_lower for keyword in keywords):
+            return True
+        
+        # Pattern matching for "change/swap/switch/trade/drop/pick up ... shift"
+        # This handles cases like "change my march 1st shift"
+        shift_patterns = [
+            r'\b(change|swap|switch|trade|drop|modify)\b.*\bshift\b',
+            r'\bshift\b.*\b(change|swap|switch|trade|drop|modify)\b',
+            r'\bpick\s*up\b.*\bshift\b',
+            r'\bneed\s+(a\s+)?different\s+shift\b',
+            r'\bcan.t\s+(work|make)\b.*\bshift\b',
+            r'\b(move|reschedule)\b.*\bshift\b',
+        ]
+        
+        for pattern in shift_patterns:
+            if re.search(pattern, message_lower):
+                return True
+        
+        return False
 
     def start_session(self):
         """Start a new shift change request session."""
