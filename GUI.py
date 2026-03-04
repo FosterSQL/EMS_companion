@@ -14,6 +14,8 @@ from ContextExtractor import ContextExtractor
 from FormFiller import FormFiller
 from ChatBot import ChatBot
 from AnswerBuilder import AnswerBuilder
+from ConversationManager import ConversationManager
+from FormSessionManager import FormSessionManager
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
@@ -32,6 +34,8 @@ class RecorderApp:
         self.form_filler = FormFiller()
         self.chatbot = ChatBot()
         self.answer_builder = AnswerBuilder(tts_engine="elevenlabs")
+        self.conversation_manager = ConversationManager()
+        self.form_session = FormSessionManager()
 
         self.is_recording = False
         self.last_transcription = ""
@@ -135,22 +139,99 @@ class RecorderApp:
     def auto_generate_and_speak(self, transcription, context):
         """Generate AI response to transcription and speak it automatically."""
         try:
-            # Generate answer based on transcription
-            prompt = f"Respond in ONE short sentence to your colleague: {transcription}"
-            reply = self.answer_builder.generate_answer(prompt, context)
+            # Display transcription
+            display = f"TRANSCRIPTION:\n{transcription}\n\n"
+            self.root.after(0, self.display_transcription, display + "Analyzing...")
+            
+            # Process through form session manager
+            form_result = self.form_session.process_message(transcription)
+            action = form_result["action"]
+            
+            # Handle form-related actions
+            if action == "start_form":
+                display += f"FORM DETECTED: {form_result['form_name']}\n\n"
+                if form_result["extracted"]:
+                    display += "CAPTURED:\n"
+                    for field, value in form_result["extracted"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    display += "\n"
+                
+                if form_result["is_complete"]:
+                    reply = f"Got it! Your {form_result['form_name']} is complete. Ready to submit."
+                else:
+                    reply = form_result["next_question"] or "What other details can you provide?"
+                    missing = form_result["missing"]
+                    display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
+                
+            elif action == "update_form":
+                display += f"FORM: {form_result['form_name']}\n\n"
+                if form_result["extracted"]:
+                    display += "NEW INFO CAPTURED:\n"
+                    for field, value in form_result["extracted"].items():
+                        display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                    display += "\n"
+                
+                # Show all collected so far
+                display += "ALL COLLECTED:\n"
+                for field, value in form_result["collected"].items():
+                    display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                display += "\n"
+                
+                missing = form_result["missing"]
+                if missing:
+                    display += f"STILL NEEDED: {', '.join([f.replace('_', ' ') for f in missing])}\n\n"
+                    reply = form_result["next_question"] or f"I still need the {missing[0].replace('_', ' ')}."
+                else:
+                    reply = "Form is complete!"
+                
+            elif action == "complete_form":
+                display += f"FORM COMPLETE: {form_result['form_name']}\n\n"
+                display += "ALL FIELDS:\n"
+                for field, value in form_result["collected"].items():
+                    display += f"  - {field.replace('_', ' ').title()}: {value}\n"
+                display += "\n"
+                
+                reply = f"Perfect! Your {form_result['form_name']} is complete with all fields filled. Would you like to submit it?"
+                
+                # Store completed form data for the Fill Form button
+                self.current_form_name = form_result["form_name"]
+                self.current_form_data = form_result["collected"]
+                self.root.after(0, lambda: self.fill_btn.config(state=tk.NORMAL))
+                
+            else:
+                # No form intent - regular conversation
+                analysis = self.conversation_manager.add_message(transcription)
+                intent = analysis["intent"]
+                details = analysis["details"]
+                
+                display += f"INTENT: {intent}\n\n"
+                if details:
+                    display += "DETAILS:\n"
+                    for category, value in details.items():
+                        if value and value is not None:
+                            display += f"  - {category}: {value}\n"
+                    display += "\n"
+                
+                # Generate conversational response
+                prompt = f"Respond in ONE short sentence to your colleague: {transcription}"
+                reply = self.answer_builder.generate_answer(prompt, context)
+                
+                self.conversation_manager.conversation_history.append({
+                    "role": "assistant",
+                    "content": reply
+                })
             
             # Display the response
-            display = f"📝 TRANSCRIPTION:\n{transcription}\n\n🤖 AI RESPONSE:\n{reply}"
-            self.root.after(0, self.display_transcription, display + "\n\n🔄 Generating audio...")
+            display += f"RESPONSE:\n{reply}"
+            self.root.after(0, self.display_transcription, display + "\n\nGenerating audio...")
             
-            # Convert to speech
+            # Convert to speech and play
             audio_file = self.answer_builder.text_to_speech(
                 reply,
                 output_file="assistant_response.mp3"
             )
             
-            # Update display and play audio
-            self.root.after(0, self.display_transcription, display + "\n\n🎵 Playing audio response...")
+            self.root.after(0, self.display_transcription, display + "\n\nPlaying audio...")
             
             if sys.platform == "win32":
                 os.startfile(audio_file)
@@ -158,9 +239,13 @@ class RecorderApp:
                 subprocess.run(["afplay", audio_file])
             else:
                 subprocess.run(["paplay", audio_file])
-                
-            # Show completion
-            self.root.after(0, self.display_transcription, display + "\n\n✅ Response complete. Ready for next recording.")
+            
+            # Show form status if in session
+            if self.form_session.active_session:
+                display += "\n\n" + self.form_session.get_form_summary()
+            
+            display += "\n\nReady for next recording."
+            self.root.after(0, self.display_transcription, display)
             
         except Exception as e:
             self.root.after(0, self.display_error, f"Response generation error: {str(e)}")
